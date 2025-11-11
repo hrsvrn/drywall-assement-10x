@@ -7,24 +7,26 @@ import os
 import albumentations as A
 
 
-def collate_fn(batch):
-    """Custom collate function to handle variable-length text inputs."""
-    # Extract masks separately
-    masks = torch.stack([item.pop("mask") for item in batch])
+def create_collate_fn(processor):
+    """Create a collate function with a pre-loaded processor."""
+    def collate_fn(batch):
+        """Custom collate function to handle variable-length text inputs."""
+        # Extract masks separately
+        masks = torch.stack([item.pop("mask") for item in batch])
+        
+        # Get text prompts and images
+        texts = [item["text"] for item in batch]
+        images = [item["images"] for item in batch]
+        
+        # Process all at once - use the passed processor (not re-downloaded!)
+        inputs = processor(text=texts, images=images, return_tensors="pt", padding="max_length", truncation=True)
+        
+        # Add masks back
+        inputs["mask"] = masks
+        
+        return inputs
     
-    # Get text prompts and images
-    texts = [item["text"] for item in batch]
-    images = [item["images"] for item in batch]
-    
-    # Process all at once - processor handles padding for text automatically
-    from transformers import CLIPSegProcessor
-    processor = CLIPSegProcessor.from_pretrained("CIDAS/clipseg-rd64-refined")
-    inputs = processor(text=texts, images=images, return_tensors="pt", padding="max_length", truncation=True)
-    
-    # Add masks back
-    inputs["mask"] = masks
-    
-    return inputs
+    return collate_fn
 
 
 class CLIPSegDataset(Dataset):

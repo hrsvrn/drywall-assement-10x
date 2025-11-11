@@ -5,7 +5,7 @@ from torch.utils.data import DataLoader
 from transformers import CLIPSegProcessor, CLIPSegForImageSegmentation
 from tqdm import tqdm
 import wandb
-from dataset import CLIPSegDataset, collate_fn
+from dataset import CLIPSegDataset, create_collate_fn
 from loss import hybrid_loss
 from evaluate import evaluate
 from visualize import visualize
@@ -21,7 +21,7 @@ os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs("../checkpoints", exist_ok=True)
 
 EPOCHS = 15
-BATCH_SIZE = 128
+BATCH_SIZE = 256
 LR = 5e-5
 
 # --------------------------
@@ -57,6 +57,9 @@ for param in model.clip.text_model.parameters():
 # Dataset and Dataloaders
 train_ds = CLIPSegDataset(CSV_PATH, processor, split="train", transform=get_train_transforms())
 val_ds   = CLIPSegDataset(CSV_PATH, processor, split="valid")
+
+# Create collate function with the processor (avoids re-downloading for every batch)
+collate_fn = create_collate_fn(processor)
 
 train_dl = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, collate_fn=collate_fn)
 val_dl   = DataLoader(val_ds, batch_size=2, collate_fn=collate_fn)
