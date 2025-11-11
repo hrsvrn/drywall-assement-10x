@@ -16,10 +16,10 @@ def collate_fn(batch):
     texts = [item["text"] for item in batch]
     images = [item["images"] for item in batch]
     
-    # Process all at once with padding
+    # Process all at once - processor handles padding for text automatically
     from transformers import CLIPSegProcessor
     processor = CLIPSegProcessor.from_pretrained("CIDAS/clipseg-rd64-refined")
-    inputs = processor(text=texts, images=images, return_tensors="pt", padding=True)
+    inputs = processor(text=texts, images=images, return_tensors="pt", padding="max_length", truncation=True)
     
     # Add masks back
     inputs["mask"] = masks
