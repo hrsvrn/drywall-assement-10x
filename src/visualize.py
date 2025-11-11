@@ -1,10 +1,16 @@
 import cv2, matplotlib.pyplot as plt
 import torch
+import os
 from PIL import Image
 import wandb
 import numpy as np
 
 def visualize(image_path, prompt, model, processor, device):
+    # Get root directory if path is relative
+    if not os.path.isabs(image_path):
+        root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        image_path = os.path.join(root_dir, image_path)
+    
     image = Image.open(image_path).convert("RGB")
     inputs = processor(text=prompt, images=image, return_tensors="pt").to(device)
     with torch.no_grad():

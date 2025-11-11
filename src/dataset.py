@@ -3,6 +3,7 @@ from PIL import Image
 import torch
 import pandas as pd
 import numpy as np
+import os
 import albumentations as A
 
 class CLIPSegDataset(Dataset):
@@ -11,14 +12,22 @@ class CLIPSegDataset(Dataset):
         self.data = self.data[self.data["split"] == split].reset_index(drop=True)
         self.processor = processor
         self.transform = transform
+        
+        # Get root directory (parent of src)
+        self.root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
         row = self.data.iloc[idx]
-        image = np.array(Image.open(row["image_path"]).convert("RGB"))
-        mask = np.array(Image.open(row["mask_path"]).convert("L")) / 255.0
+        
+        # Resolve paths relative to root directory
+        image_path = os.path.join(self.root_dir, row["image_path"])
+        mask_path = os.path.join(self.root_dir, row["mask_path"])
+        
+        image = np.array(Image.open(image_path).convert("RGB"))
+        mask = np.array(Image.open(mask_path).convert("L")) / 255.0
         mask = torch.tensor(mask).unsqueeze(0).float()
 
         if self.transform:
