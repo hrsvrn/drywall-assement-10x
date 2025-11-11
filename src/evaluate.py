@@ -22,8 +22,22 @@ def evaluate(model, val_dl, device):
                 ).squeeze(1)
             
             preds_bin = (preds > 0.5).float()
-            inter = (preds_bin * masks).sum()
-            dice = (2 * inter + 1e-7) / (preds_bin.sum() + masks.sum() + 1e-7)
-            iou = inter / ((preds_bin + masks - preds_bin*masks).sum() + 1e-7)
-            dice_scores.append(dice.item()); iou_scores.append(iou.item())
+            
+            # Compute metrics per image in the batch
+            batch_size = preds_bin.shape[0]
+            for i in range(batch_size):
+                pred_i = preds_bin[i]
+                mask_i = masks[i]
+                
+                inter = (pred_i * mask_i).sum()
+                union = pred_i.sum() + mask_i.sum() - inter
+                
+                # Dice score
+                dice = (2 * inter + 1e-7) / (pred_i.sum() + mask_i.sum() + 1e-7)
+                dice_scores.append(dice.item())
+                
+                # IoU score
+                iou = (inter + 1e-7) / (union + 1e-7)
+                iou_scores.append(iou.item())
+    
     return np.mean(dice_scores), np.mean(iou_scores)
