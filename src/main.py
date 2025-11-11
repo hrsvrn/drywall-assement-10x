@@ -50,7 +50,8 @@ wandb.init(
 processor = CLIPSegProcessor.from_pretrained("CIDAS/clipseg-rd64-refined")
 model = CLIPSegForImageSegmentation.from_pretrained("CIDAS/clipseg-rd64-refined").to(device)
 
-for param in model.text_encoder.parameters():
+# Freeze text encoder (CLIP text model)
+for param in model.clip.text_model.parameters():
     param.requires_grad = False
 
 # Dataset and Dataloaders
