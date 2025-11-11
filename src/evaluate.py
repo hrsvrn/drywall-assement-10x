@@ -7,7 +7,7 @@ def evaluate(model, val_dl, device):
     with torch.no_grad():
         for batch in val_dl:
             masks = batch.pop("mask").to(device)
-            inputs = {k:v.squeeze().to(device) for k,v in batch.items()}
+            inputs = {k:v.to(device) for k,v in batch.items()}
             preds = torch.sigmoid(model(**inputs).logits)
             preds_bin = (preds > 0.5).float()
             inter = (preds_bin * masks).sum()

@@ -5,7 +5,7 @@ from torch.utils.data import DataLoader
 from transformers import CLIPSegProcessor, CLIPSegForImageSegmentation
 from tqdm import tqdm
 import wandb
-from dataset import CLIPSegDataset
+from dataset import CLIPSegDataset, collate_fn
 from loss import hybrid_loss
 from evaluate import evaluate
 from visualize import visualize
@@ -58,8 +58,8 @@ for param in model.clip.text_model.parameters():
 train_ds = CLIPSegDataset(CSV_PATH, processor, split="train", transform=get_train_transforms())
 val_ds   = CLIPSegDataset(CSV_PATH, processor, split="valid")
 
-train_dl = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True)
-val_dl   = DataLoader(val_ds, batch_size=2)
+train_dl = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, collate_fn=collate_fn)
+val_dl   = DataLoader(val_ds, batch_size=2, collate_fn=collate_fn)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
 
@@ -73,7 +73,7 @@ for epoch in range(EPOCHS):
 
     for batch in tqdm(train_dl, desc=f"Epoch {epoch+1}/{EPOCHS}"):
         masks = batch.pop("mask").to(device)
-        inputs = {k:v.squeeze().to(device) for k,v in batch.items()}
+        inputs = {k:v.to(device) for k,v in batch.items()}
 
         outputs = model(**inputs)
         loss = hybrid_loss(outputs.logits, masks)
