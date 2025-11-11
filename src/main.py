@@ -21,7 +21,7 @@ os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs("../checkpoints", exist_ok=True)
 
 EPOCHS = 15
-BATCH_SIZE = 4
+BATCH_SIZE = 128
 LR = 5e-5
 
 # --------------------------
