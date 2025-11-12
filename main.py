@@ -43,14 +43,32 @@ def run_preprocessing():
 	return True
 
 
+def download_models():
+	"""Download model checkpoints."""
+	print("\n" + "="*60)
+	print("DOWNLOADING MODEL CHECKPOINTS")
+	print("="*60)
+	
+	root_dir = os.path.dirname(os.path.abspath(__file__))
+	result = os.system(f"cd {root_dir} && python3 download_models.py")
+	
+	if result != 0:
+		print("\nERROR: Failed to download models.")
+		return False
+	
+	print("\nModel download complete!")
+	return True
+
+
 def run_training():
 	"""Run model training."""
 	print("\n" + "="*60)
-	print("MODEL TRAINING")
+	print("MODEL TRAINING (GroundingDINO + SAM)")
 	print("="*60)
 	
 	root_dir = os.path.dirname(os.path.abspath(__file__))
 	src_dir = os.path.join(root_dir, 'src')
+	checkpoints_dir = os.path.join(root_dir, 'checkpoints')
 	
 	# Check if dataset CSV exists
 	csv_path = os.path.join(root_dir, 'processed_datasets', 'dataset.csv')
@@ -59,10 +77,27 @@ def run_training():
 		print("Please run preprocessing first: python3 main.py --mode preprocess")
 		return False
 	
-	print(f"\nDataset CSV found: {csv_path}")
-	print("Starting training...\n")
+	# Check if model checkpoints exist
+	sam_checkpoint = os.path.join(checkpoints_dir, 'sam_vit_h_4b8939.pth')
+	gdino_checkpoint = os.path.join(checkpoints_dir, 'groundingdino_swint_ogc.pth')
 	
-	result = os.system(f"cd {src_dir} && python3 main.py")
+	if not os.path.exists(sam_checkpoint):
+		print(f"ERROR: SAM checkpoint not found: {sam_checkpoint}")
+		print("Please download models first: python3 download_models.py")
+		return False
+	
+	if not os.path.exists(gdino_checkpoint):
+		print(f"ERROR: GroundingDINO checkpoint not found: {gdino_checkpoint}")
+		print("Please download models first: python3 download_models.py")
+		return False
+	
+	print(f"\n✓ Dataset CSV found: {csv_path}")
+	print(f"✓ SAM checkpoint found: {sam_checkpoint}")
+	print(f"✓ GroundingDINO checkpoint found: {gdino_checkpoint}")
+	print("\nStarting training...\n")
+	
+	# Run new GroundedSAM training script
+	result = os.system(f"cd {src_dir} && python3 train_grounded_sam.py")
 	
 	if result != 0:
 		print("\nERROR: Training failed.")
@@ -78,6 +113,9 @@ def main():
 		formatter_class=argparse.RawDescriptionHelpFormatter,
 		epilog="""
 Examples:
+  # Download model checkpoints
+  python3 main.py --mode download
+  
   # Run complete pipeline (preprocessing + training)
   python3 main.py --mode all
   
@@ -92,7 +130,7 @@ Examples:
 	
 	parser.add_argument(
 		'--mode',
-		choices=['all', 'preprocess', 'train'],
+		choices=['all', 'preprocess', 'train', 'download'],
 		default='train',
 		help='Pipeline mode (default: train)'
 	)
@@ -105,6 +143,11 @@ Examples:
 	print(f"Mode: {args.mode.upper()}")
 	
 	success = True
+	
+	# Download models if requested
+	if args.mode == 'download':
+		if not download_models():
+			success = False
 	
 	# Run preprocessing if requested
 	if args.mode in ['all', 'preprocess']:

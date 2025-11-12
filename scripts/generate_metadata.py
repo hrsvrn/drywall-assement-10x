@@ -56,7 +56,7 @@ with open(csv_path, "a" if file_exists else "w", newline='') as f:
         
         return count
 
-    # Process both datasets with train and valid splits
+    # Process both datasets with train, valid, and test splits
     total_count = 0
     
     # Cracks dataset
@@ -69,14 +69,22 @@ with open(csv_path, "a" if file_exists else "w", newline='') as f:
     print(f"  Added {count} validation images")
     total_count += count
     
-    # Drywall joints dataset
+    count = add_entries("cracks-1", "test", "segment crack")
+    print(f"  Added {count} test images")
+    total_count += count
+    
+    # Drywall joints dataset (using "segment taping area" for consistency)
     print("Processing Drywall-Join-Detect-1 dataset...")
-    count = add_entries("Drywall-Join-Detect-1", "train", "segment drywall joint")
+    count = add_entries("Drywall-Join-Detect-1", "train", "segment taping area")
     print(f"  Added {count} training images")
     total_count += count
     
-    count = add_entries("Drywall-Join-Detect-1", "valid", "segment drywall joint")
+    count = add_entries("Drywall-Join-Detect-1", "valid", "segment taping area")
     print(f"  Added {count} validation images")
+    total_count += count
+    
+    count = add_entries("Drywall-Join-Detect-1", "test", "segment taping area")
+    print(f"  Added {count} test images")
     total_count += count
 
 print(f"\n{'='*60}")

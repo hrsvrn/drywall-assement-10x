@@ -147,7 +147,7 @@ def main():
 	
 	# Define datasets to process
 	datasets = ['cracks-1', 'Drywall-Join-Detect-1']
-	splits = ['train', 'valid']
+	splits = ['train', 'valid', 'test']
 	
 	# Process each dataset
 	for dataset_name in datasets:

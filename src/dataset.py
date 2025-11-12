@@ -7,33 +7,31 @@ import os
 import albumentations as A
 
 
-def create_collate_fn(processor):
-    """Create a collate function with a pre-loaded processor."""
-    def collate_fn(batch):
-        """Custom collate function to handle variable-length text inputs."""
-        # Extract masks separately
-        masks = torch.stack([item.pop("mask") for item in batch])
-        
-        # Get text prompts and images
-        texts = [item["text"] for item in batch]
-        images = [item["images"] for item in batch]
-        
-        # Process all at once - use the passed processor (not re-downloaded!)
-        inputs = processor(text=texts, images=images, return_tensors="pt", padding="max_length", truncation=True)
-        
-        # Add masks back
-        inputs["mask"] = masks
-        
-        return inputs
+def collate_fn(batch):
+    """
+    Custom collate function for GroundedSAM.
+    Returns batched images, prompts, and masks as numpy arrays.
+    """
+    images = [item["image"] for item in batch]
+    prompts = [item["prompt"] for item in batch]
+    masks = torch.stack([item["mask"] for item in batch])
     
-    return collate_fn
+    return {
+        "images": images,  # List of numpy arrays
+        "prompts": prompts,  # List of strings
+        "masks": masks  # Tensor (B, H, W)
+    }
 
 
-class CLIPSegDataset(Dataset):
-    def __init__(self, csv_path, processor, split="train", transform=None):
+class GroundedSAMDataset(Dataset):
+    """
+    Dataset for GroundingDINO + SAM text-conditioned segmentation.
+    Returns images as numpy arrays, text prompts, and ground truth masks.
+    """
+    
+    def __init__(self, csv_path, split="train", transform=None):
         self.data = pd.read_csv(csv_path)
         self.data = self.data[self.data["split"] == split].reset_index(drop=True)
-        self.processor = processor
         self.transform = transform
         
         # Get root directory (parent of src)
@@ -49,19 +47,25 @@ class CLIPSegDataset(Dataset):
         image_path = os.path.join(self.root_dir, row["image_path"])
         mask_path = os.path.join(self.root_dir, row["mask_path"])
         
+        # Load image and mask as numpy arrays
         image = np.array(Image.open(image_path).convert("RGB"))
         mask = np.array(Image.open(mask_path).convert("L")) / 255.0
-        mask = torch.tensor(mask).unsqueeze(0).float()
 
+        # Apply augmentations
         if self.transform:
-            aug = self.transform(image=image, mask=mask.squeeze().numpy())
-            image, mask = aug["image"], torch.tensor(aug["mask"]).unsqueeze(0)
-
-        image = Image.fromarray(image)
+            aug = self.transform(image=image, mask=mask)
+            image = aug["image"]
+            mask = aug["mask"]
         
-        # Return dict with text and image (not processed yet)
+        # Convert mask to tensor
+        mask = torch.tensor(mask, dtype=torch.float32)
+        
         return {
-            "text": row["prompt"],
-            "images": image,
-            "mask": mask
+            "image": image,  # numpy array (H, W, 3)
+            "prompt": row["prompt"],  # string
+            "mask": mask  # tensor (H, W)
         }
+
+
+# Backward compatibility alias
+CLIPSegDataset = GroundedSAMDataset
