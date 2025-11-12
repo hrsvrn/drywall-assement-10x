@@ -170,7 +170,6 @@ for epoch in range(EPOCHS):
                 with torch.no_grad():
                     # This properly resizes to 1024x1024 and generates 64x64 feature maps
                     model.sam_predictor.set_image(image)
-                    image_embedding = model.sam_predictor.features  # Get the cached features
                 
                 # Step 3: Transform boxes to SAM's coordinate space
                 boxes = detections.xyxy
@@ -191,6 +190,10 @@ for epoch in range(EPOCHS):
                     boxes=boxes_xyxy,
                     masks=None,
                 )
+                
+                # Get the image embedding that was cached by set_image
+                # This should be (1, C, 64, 64) for ViT-H
+                image_embedding = model.sam_predictor.get_image_embedding()
                 
                 # Get mask predictions from decoder (this maintains gradients!)
                 low_res_masks, iou_predictions = model.sam_predictor.model.mask_decoder(

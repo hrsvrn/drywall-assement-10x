@@ -57,11 +57,15 @@ class GroundedSAMDataset(Dataset):
             image = aug["image"]
             mask = aug["mask"]
         
+        # Ensure image is uint8 (required by SAM)
+        if image.dtype != np.uint8:
+            image = (image * 255).astype(np.uint8) if image.max() <= 1.0 else image.astype(np.uint8)
+        
         # Convert mask to tensor
         mask = torch.tensor(mask, dtype=torch.float32)
         
         return {
-            "image": image,  # numpy array (H, W, 3)
+            "image": image,  # numpy array (H, W, 3) uint8
             "prompt": row["prompt"],  # string
             "mask": mask  # tensor (H, W)
         }
