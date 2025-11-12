@@ -165,30 +165,25 @@ for epoch in range(EPOCHS):
                     print(f"\nNo detections for prompt: {prompt}")
                     continue
                 
-                # Step 2: Prepare image for SAM (encode with gradients disabled for encoder)
-                # Transform image to SAM format
-                from torchvision import transforms
-                transform = transforms.Compose([
-                    transforms.ToTensor(),
-                    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-                ])
-                
-                # Convert image to tensor and encode
-                image_tensor = torch.from_numpy(image).permute(2, 0, 1).float() / 255.0
-                image_tensor = image_tensor.unsqueeze(0).to(device)
-                
-                # Encode image (this part is frozen, no gradients needed)
+                # Step 2: Prepare and encode image with SAM
+                # Use SAM's built-in image preprocessing which handles resizing correctly
                 with torch.no_grad():
-                    image_embedding = model.sam_predictor.model.image_encoder(image_tensor)
+                    # This properly resizes to 1024x1024 and generates 64x64 feature maps
+                    model.sam_predictor.set_image(image)
+                    image_embedding = model.sam_predictor.features  # Get the cached features
                 
-                # Step 3: Encode boxes as prompts (THIS MAINTAINS GRADIENTS!)
+                # Step 3: Transform boxes to SAM's coordinate space
                 boxes = detections.xyxy
                 boxes_tensor = torch.tensor(boxes, device=device, dtype=torch.float)
                 
-                h, w = image.shape[:2]
+                # Apply SAM's transform to boxes (accounts for resizing/padding)
+                boxes_transformed = model.sam_predictor.transform.apply_boxes_torch(
+                    boxes_tensor,
+                    image.shape[:2]
+                )
                 
                 # Reshape boxes for SAM: (N, 2, 2) format [top-left, bottom-right]
-                boxes_xyxy = boxes_tensor.reshape(-1, 2, 2)
+                boxes_xyxy = boxes_transformed.reshape(-1, 2, 2)
                 
                 # Encode box prompts through prompt encoder
                 sparse_embeddings, dense_embeddings = model.sam_predictor.model.prompt_encoder(
@@ -206,17 +201,23 @@ for epoch in range(EPOCHS):
                     multimask_output=False,
                 )
                 
-                # Upsample masks to full resolution
-                pred_masks = F.interpolate(
+                # Get original image size
+                h, w = image.shape[:2]
+                
+                # Upsample masks directly to original image size
+                # (SAM will handle the transformation internally)
+                upscaled_masks = F.interpolate(
                     low_res_masks,
                     size=(h, w),
                     mode='bilinear',
                     align_corners=False
                 )
                 
-                # Apply sigmoid and combine masks
-                pred_masks = torch.sigmoid(pred_masks)
-                pred_mask = pred_masks.max(dim=0)[0]  # (1, H, W) with gradients!
+                # Apply sigmoid
+                upscaled_masks = torch.sigmoid(upscaled_masks)
+                
+                # Combine masks (union) - maintains gradients
+                pred_mask = upscaled_masks.max(dim=0)[0]  # (1, H, W) with gradients!
                 
                 # Get corresponding GT mask and ensure it's float
                 gt_mask = gt_masks[i:i+1].float()  # (1, H, W) float in [0, 1]

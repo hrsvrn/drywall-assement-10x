@@ -95,10 +95,13 @@ def process_coco_dataset(dataset_path, output_path, dataset_name, split):
 		# Get annotations for this image
 		if img_id in annotations_by_image:
 			for ann in annotations_by_image[img_id]:
+				mask = None
+				
+				# Try to use polygon segmentation first
 				if 'segmentation' in ann and ann['segmentation']:
 					# Handle both list of polygons and single polygon
 					segmentation = ann['segmentation']
-					if isinstance(segmentation, list):
+					if isinstance(segmentation, list) and len(segmentation) > 0:
 						# Check if it's a list of polygons or a single polygon
 						if isinstance(segmentation[0], list):
 							# Multiple polygons
@@ -106,9 +109,20 @@ def process_coco_dataset(dataset_path, output_path, dataset_name, split):
 						else:
 							# Single polygon as flat list
 							mask = create_binary_mask_from_polygons([segmentation], (height, width))
-						
-						# Combine masks (union)
-						combined_mask = np.maximum(combined_mask, mask)
+				
+				# Fall back to bounding box if no segmentation available
+				if mask is None and 'bbox' in ann:
+					bbox = ann['bbox']  # [x, y, width, height] in COCO format
+					x, y, w, h = bbox
+					x, y, w, h = int(x), int(y), int(w), int(h)
+					
+					# Create mask from bounding box
+					mask = np.zeros((height, width), dtype=np.uint8)
+					mask[y:y+h, x:x+w] = 255
+				
+				# Combine masks (union)
+				if mask is not None:
+					combined_mask = np.maximum(combined_mask, mask)
 		
 		# Save mask
 		mask_filename = os.path.splitext(filename)[0] + '_mask.png'
