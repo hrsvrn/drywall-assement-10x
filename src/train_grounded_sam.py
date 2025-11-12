@@ -181,58 +181,70 @@ for epoch in range(EPOCHS):
                     image.shape[:2]
                 )
                 
-                # Reshape boxes for SAM: (N, 2, 2) format [top-left, bottom-right]
-                boxes_xyxy = boxes_transformed.reshape(-1, 2, 2)
-                
-                # Encode box prompts through prompt encoder
-                sparse_embeddings, dense_embeddings = model.sam_predictor.model.prompt_encoder(
-                    points=None,
-                    boxes=boxes_xyxy,
-                    masks=None,
-                )
-                
                 # Get the image embedding that was cached by set_image
                 # This should be (1, C, 64, 64) for ViT-H
                 image_embedding = model.sam_predictor.get_image_embedding()
                 
-                # Get mask predictions from decoder (this maintains gradients!)
-                low_res_masks, iou_predictions = model.sam_predictor.model.mask_decoder(
-                    image_embeddings=image_embedding.repeat(boxes_xyxy.shape[0], 1, 1, 1),
-                    image_pe=model.sam_predictor.model.prompt_encoder.get_dense_pe(),
-                    sparse_prompt_embeddings=sparse_embeddings,
-                    dense_prompt_embeddings=dense_embeddings,
-                    multimask_output=False,
-                )
-                
                 # Get original image size
                 h, w = image.shape[:2]
                 
-                # Upsample masks directly to original image size
-                # (SAM will handle the transformation internally)
-                upscaled_masks = F.interpolate(
-                    low_res_masks,
-                    size=(h, w),
-                    mode='bilinear',
-                    align_corners=False
-                )
+                # Process each box separately and collect masks
+                all_masks = []
+                for box in boxes_transformed:
+                    # Reshape single box to (1, 2, 2): [[x1, y1], [x2, y2]]
+                    box_input = box.reshape(1, 2, 2)
+                    
+                    # Encode box prompt through prompt encoder
+                    sparse_embeddings, dense_embeddings = model.sam_predictor.model.prompt_encoder(
+                        points=None,
+                        boxes=box_input,
+                        masks=None,
+                    )
+                    
+                    # Get mask predictions from decoder (this maintains gradients!)
+                    low_res_mask, iou_pred = model.sam_predictor.model.mask_decoder(
+                        image_embeddings=image_embedding,  # (1, C, 64, 64)
+                        image_pe=model.sam_predictor.model.prompt_encoder.get_dense_pe(),
+                        sparse_prompt_embeddings=sparse_embeddings,
+                        dense_prompt_embeddings=dense_embeddings,
+                        multimask_output=False,
+                    )
+                    
+                    # Upsample mask to original image size
+                    upscaled_mask = F.interpolate(
+                        low_res_mask,
+                        size=(h, w),
+                        mode='bilinear',
+                        align_corners=False
+                    )
+                    
+                    # Apply sigmoid
+                    upscaled_mask = torch.sigmoid(upscaled_mask)
+                    all_masks.append(upscaled_mask)
                 
-                # Apply sigmoid
-                upscaled_masks = torch.sigmoid(upscaled_masks)
-                
-                # Combine masks (union) - maintains gradients
-                pred_mask = upscaled_masks.max(dim=0)[0]  # (1, H, W) with gradients!
+                # Combine all masks (union) - maintains gradients
+                if len(all_masks) == 1:
+                    pred_mask = all_masks[0]  # (1, 1, H, W)
+                else:
+                    stacked_masks = torch.cat(all_masks, dim=0)  # (N, 1, H, W)
+                    pred_mask = stacked_masks.max(dim=0, keepdim=True)[0]  # (1, 1, H, W)
                 
                 # Get corresponding GT mask and ensure it's float
                 gt_mask = gt_masks[i:i+1].float()  # (1, H, W) float in [0, 1]
                 
+                # Ensure pred_mask has the correct shape (1, 1, H, W) -> (1, H, W)
+                if pred_mask.dim() == 4:
+                    pred_mask = pred_mask.squeeze(1)  # Remove channel dim: (1, 1, H, W) -> (1, H, W)
+                
                 # Resize prediction to match GT if needed
-                if pred_mask.shape != gt_mask.shape:
+                if pred_mask.shape[-2:] != gt_mask.shape[-2:]:
                     pred_mask = F.interpolate(
-                        pred_mask.unsqueeze(0),
+                        pred_mask.unsqueeze(1) if pred_mask.dim() == 2 else pred_mask.unsqueeze(0),
                         size=gt_mask.shape[-2:],
                         mode='bilinear',
                         align_corners=False
-                    ).squeeze(0)
+                    ).squeeze()
+                    pred_mask = pred_mask.unsqueeze(0) if pred_mask.dim() == 2 else pred_mask
                 
                 # Compute loss (pred_mask has gradients now!)
                 loss = dice_loss(pred_mask, gt_mask) + focal_loss(pred_mask, gt_mask)
