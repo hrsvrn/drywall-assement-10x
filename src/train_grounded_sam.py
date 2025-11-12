@@ -34,7 +34,7 @@ os.makedirs("../checkpoints", exist_ok=True)
 
 # Training hyperparameters
 EPOCHS = 20
-BATCH_SIZE = 2  # Smaller batch size due to SAM's memory requirements
+BATCH_SIZE = 256
 LR = 1e-5  # Lower learning rate for fine-tuning
 SEED = 42
 
