@@ -1,3 +1,6 @@
+# Minimal requirements without GroundingDINO
+# Install GroundingDINO separately from source
+
 roboflow
 python-dotenv
 torch>=2.0.0
@@ -15,7 +18,9 @@ pandas>=2.0.0
 wandb>=0.15.0
 scipy>=1.10.0
 
-# GroundingDINO and SAM dependencies
+# SAM
 segment-anything>=1.0
-supervision==0.6.0
-groundingdino-py>=0.4.0
+
+# Supervision (for GroundingDINO)
+supervision==0.22.0
+
