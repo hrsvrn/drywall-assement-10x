@@ -125,7 +125,7 @@ print("Starting training...")
 best_dice = 0.0
 
 for epoch in range(EPOCHS):
-    model.train()
+    model.sam_predictor.model.train()  # Set SAM to training mode
     total_loss = 0.0
     
     pbar = tqdm(train_dl, desc=f"Epoch {epoch+1}/{EPOCHS}")
@@ -138,25 +138,69 @@ for epoch in range(EPOCHS):
         
         # Process each sample in the batch
         for i, (image, prompt) in enumerate(zip(images, prompts)):
-            # Get prediction from model
-            pred_mask = model.predict(image, prompt)  # (H, W) numpy array
-            
-            # Convert to tensor and resize to match GT
-            pred_mask = torch.tensor(pred_mask, device=device).unsqueeze(0)  # (1, H, W)
-            gt_mask = gt_masks[i:i+1]  # (1, H, W)
-            
-            # Resize prediction to match GT if needed
-            if pred_mask.shape != gt_mask.shape:
-                pred_mask = F.interpolate(
-                    pred_mask.unsqueeze(0),
-                    size=gt_mask.shape[-2:],
-                    mode='bilinear',
-                    align_corners=False
-                ).squeeze(0)
-            
-            # Compute loss
-            loss = dice_loss(pred_mask, gt_mask) + focal_loss(pred_mask, gt_mask)
-            batch_loss += loss
+            try:
+                # Extract text label for GroundingDINO
+                clean_prompt = prompt.replace("segment ", "").strip()
+                
+                # Step 1: Detect with GroundingDINO (no gradients needed)
+                with torch.no_grad():
+                    detections = model.grounding_dino.predict_with_classes(
+                        image=image,
+                        classes=[clean_prompt],
+                        box_threshold=model.box_threshold,
+                        text_threshold=model.text_threshold
+                    )
+                
+                # If no detections, skip this sample
+                if len(detections.xyxy) == 0:
+                    print(f"\nNo detections for prompt: {prompt}")
+                    continue
+                
+                # Step 2: Set image in SAM predictor
+                model.sam_predictor.set_image(image)
+                
+                # Step 3: Get boxes and prepare them for SAM
+                boxes = detections.xyxy
+                transformed_boxes = model.sam_predictor.transform.apply_boxes_torch(
+                    torch.tensor(boxes, device=device),
+                    image.shape[:2]
+                )
+                
+                # Step 4: Forward pass through SAM WITH GRADIENTS
+                masks, scores, _ = model.sam_predictor.predict_torch(
+                    point_coords=None,
+                    point_labels=None,
+                    boxes=transformed_boxes,
+                    multimask_output=False
+                )
+                
+                # Combine all masks (union) - maintains gradients
+                pred_mask = masks.max(dim=0)[0]  # (1, H, W) with gradients
+                
+                # Get corresponding GT mask
+                gt_mask = gt_masks[i:i+1]  # (1, H, W)
+                
+                # Resize prediction to match GT if needed
+                if pred_mask.shape != gt_mask.shape:
+                    pred_mask = F.interpolate(
+                        pred_mask.unsqueeze(0),
+                        size=gt_mask.shape[-2:],
+                        mode='bilinear',
+                        align_corners=False
+                    ).squeeze(0)
+                
+                # Compute loss (pred_mask has gradients now!)
+                loss = dice_loss(pred_mask, gt_mask) + focal_loss(pred_mask, gt_mask)
+                batch_loss += loss
+                
+            except Exception as e:
+                print(f"\nError processing sample {i}: {e}")
+                continue
+        
+        # Check if we have any valid loss
+        if batch_loss == 0:
+            print("\nWarning: No valid samples in batch, skipping...")
+            continue
         
         # Average loss over batch
         batch_loss = batch_loss / len(images)
@@ -164,10 +208,14 @@ for epoch in range(EPOCHS):
         # Backward pass
         optimizer.zero_grad()
         batch_loss.backward()
+        
+        # Gradient clipping to prevent exploding gradients
+        torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=1.0)
+        
         optimizer.step()
         
         total_loss += batch_loss.item()
-        pbar.set_postfix({"loss": batch_loss.item()})
+        pbar.set_postfix({"loss": f"{batch_loss.item():.4f}"})
         wandb.log({"train_loss": batch_loss.item()})
     
     avg_train_loss = total_loss / len(train_dl)
@@ -176,7 +224,7 @@ for epoch in range(EPOCHS):
     # --------------------------
     # VALIDATION
     # --------------------------
-    model.eval()
+    model.sam_predictor.model.eval()  # Set SAM to eval mode
     val_dice, val_miou = evaluate_grounded_sam(model, val_dl, device)
     
     wandb.log({
