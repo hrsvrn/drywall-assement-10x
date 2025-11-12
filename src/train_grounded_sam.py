@@ -83,13 +83,17 @@ if model.grounding_dino:
     for param in model.grounding_dino.model.parameters():
         param.requires_grad = False
 
-# Freeze SAM encoder, only fine-tune decoder
+# Freeze SAM image encoder, fine-tune prompt encoder and mask decoder
 if model.sam_predictor:
+    # Freeze image encoder (large, pre-trained)
     for param in model.sam_predictor.model.image_encoder.parameters():
         param.requires_grad = False
+    
+    # Enable prompt encoder (needed for box encoding with gradients)
     for param in model.sam_predictor.model.prompt_encoder.parameters():
-        param.requires_grad = False
-    # Only mask decoder is trainable
+        param.requires_grad = True
+    
+    # Enable mask decoder (main training target)
     for param in model.sam_predictor.model.mask_decoder.parameters():
         param.requires_grad = True
 
@@ -111,8 +115,13 @@ print(f"Val samples: {len(val_ds)}")
 # --------------------------
 # OPTIMIZER
 # --------------------------
-# Only optimize SAM's mask decoder parameters
-trainable_params = [p for p in model.sam_predictor.model.mask_decoder.parameters() if p.requires_grad]
+# Optimize SAM's prompt encoder and mask decoder parameters
+trainable_params = list(model.sam_predictor.model.prompt_encoder.parameters()) + \
+                  list(model.sam_predictor.model.mask_decoder.parameters())
+trainable_params = [p for p in trainable_params if p.requires_grad]
+
+print(f"Trainable parameters: {sum(p.numel() for p in trainable_params):,}")
+
 optimizer = torch.optim.AdamW(trainable_params, lr=LR, weight_decay=0.01)
 
 # Learning rate scheduler
@@ -156,29 +165,58 @@ for epoch in range(EPOCHS):
                     print(f"\nNo detections for prompt: {prompt}")
                     continue
                 
-                # Step 2: Set image in SAM predictor
-                model.sam_predictor.set_image(image)
+                # Step 2: Prepare image for SAM (encode with gradients disabled for encoder)
+                # Transform image to SAM format
+                from torchvision import transforms
+                transform = transforms.Compose([
+                    transforms.ToTensor(),
+                    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+                ])
                 
-                # Step 3: Get boxes and prepare them for SAM
+                # Convert image to tensor and encode
+                image_tensor = torch.from_numpy(image).permute(2, 0, 1).float() / 255.0
+                image_tensor = image_tensor.unsqueeze(0).to(device)
+                
+                # Encode image (this part is frozen, no gradients needed)
+                with torch.no_grad():
+                    image_embedding = model.sam_predictor.model.image_encoder(image_tensor)
+                
+                # Step 3: Encode boxes as prompts (THIS MAINTAINS GRADIENTS!)
                 boxes = detections.xyxy
-                transformed_boxes = model.sam_predictor.transform.apply_boxes_torch(
-                    torch.tensor(boxes, device=device),
-                    image.shape[:2]
+                boxes_tensor = torch.tensor(boxes, device=device, dtype=torch.float)
+                
+                h, w = image.shape[:2]
+                
+                # Reshape boxes for SAM: (N, 2, 2) format [top-left, bottom-right]
+                boxes_xyxy = boxes_tensor.reshape(-1, 2, 2)
+                
+                # Encode box prompts through prompt encoder
+                sparse_embeddings, dense_embeddings = model.sam_predictor.model.prompt_encoder(
+                    points=None,
+                    boxes=boxes_xyxy,
+                    masks=None,
                 )
                 
-                # Step 4: Forward pass through SAM WITH GRADIENTS
-                masks, scores, _ = model.sam_predictor.predict_torch(
-                    point_coords=None,
-                    point_labels=None,
-                    boxes=transformed_boxes,
-                    multimask_output=False
+                # Get mask predictions from decoder (this maintains gradients!)
+                low_res_masks, iou_predictions = model.sam_predictor.model.mask_decoder(
+                    image_embeddings=image_embedding.repeat(boxes_xyxy.shape[0], 1, 1, 1),
+                    image_pe=model.sam_predictor.model.prompt_encoder.get_dense_pe(),
+                    sparse_prompt_embeddings=sparse_embeddings,
+                    dense_prompt_embeddings=dense_embeddings,
+                    multimask_output=False,
                 )
                 
-                # SAM outputs logits, apply sigmoid to get probabilities [0, 1]
-                masks = torch.sigmoid(masks)
+                # Upsample masks to full resolution
+                pred_masks = F.interpolate(
+                    low_res_masks,
+                    size=(h, w),
+                    mode='bilinear',
+                    align_corners=False
+                )
                 
-                # Combine all masks (union) - maintains gradients
-                pred_mask = masks.max(dim=0)[0]  # (1, H, W) with gradients in [0, 1]
+                # Apply sigmoid and combine masks
+                pred_masks = torch.sigmoid(pred_masks)
+                pred_mask = pred_masks.max(dim=0)[0]  # (1, H, W) with gradients!
                 
                 # Get corresponding GT mask and ensure it's float
                 gt_mask = gt_masks[i:i+1].float()  # (1, H, W) float in [0, 1]
