@@ -174,11 +174,14 @@ for epoch in range(EPOCHS):
                     multimask_output=False
                 )
                 
-                # Combine all masks (union) - maintains gradients
-                pred_mask = masks.max(dim=0)[0]  # (1, H, W) with gradients
+                # SAM outputs logits, apply sigmoid to get probabilities [0, 1]
+                masks = torch.sigmoid(masks)
                 
-                # Get corresponding GT mask
-                gt_mask = gt_masks[i:i+1]  # (1, H, W)
+                # Combine all masks (union) - maintains gradients
+                pred_mask = masks.max(dim=0)[0]  # (1, H, W) with gradients in [0, 1]
+                
+                # Get corresponding GT mask and ensure it's float
+                gt_mask = gt_masks[i:i+1].float()  # (1, H, W) float in [0, 1]
                 
                 # Resize prediction to match GT if needed
                 if pred_mask.shape != gt_mask.shape:

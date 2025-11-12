@@ -14,6 +14,10 @@ def dice_loss(pred, target, smooth=1e-7):
     Returns:
         Dice loss value
     """
+    # Ensure both are float and in correct range
+    pred = pred.float().clamp(0, 1)
+    target = target.float().clamp(0, 1)
+    
     pred = pred.contiguous().view(-1)
     target = target.contiguous().view(-1)
     
@@ -37,6 +41,10 @@ def focal_loss(pred, target, alpha=0.25, gamma=2.0):
     Returns:
         Focal loss value
     """
+    # Ensure both are float and in correct range
+    pred = pred.float().clamp(0, 1)
+    target = target.float().clamp(0, 1)
+    
     bce = F.binary_cross_entropy(pred, target, reduction='none')
     pt = torch.exp(-bce)
     focal = alpha * (1 - pt) ** gamma * bce
