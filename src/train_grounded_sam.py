@@ -33,7 +33,7 @@ os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs("../checkpoints", exist_ok=True)
 
 # Training hyperparameters
-EPOCHS = 20
+EPOCHS = 10
 BATCH_SIZE = 256  # Note: Each sample processed sequentially through SAM
 LR = 1e-5  # Lower learning rate for fine-tuning
 SEED = 42
