@@ -34,9 +34,16 @@ os.makedirs("../checkpoints", exist_ok=True)
 
 # Training hyperparameters
 EPOCHS = 20
-BATCH_SIZE = 256
+BATCH_SIZE = 256  # Note: Each sample processed sequentially through SAM
 LR = 1e-5  # Lower learning rate for fine-tuning
 SEED = 42
+
+# Warning about batch size
+if BATCH_SIZE > 128:
+    print(f"⚠️  WARNING: Large batch size ({BATCH_SIZE}) with sequential SAM processing.")
+    print(f"   Each sample runs SAM's image encoder separately, which is memory-intensive.")
+    print(f"   This is effectively gradient accumulation over {BATCH_SIZE} samples.")
+    print(f"   Consider reducing if you encounter OOM errors.\n")
 
 # --------------------------
 # SETUP
@@ -136,6 +143,9 @@ best_dice = 0.0
 for epoch in range(EPOCHS):
     model.sam_predictor.model.train()  # Set SAM to training mode
     total_loss = 0.0
+    num_batches = 0
+    total_samples = 0
+    valid_samples_count = 0
     
     pbar = tqdm(train_dl, desc=f"Epoch {epoch+1}/{EPOCHS}")
     for batch in pbar:
@@ -144,6 +154,7 @@ for epoch in range(EPOCHS):
         gt_masks = batch["masks"].to(device)  # (B, H, W)
         
         batch_loss = 0.0
+        valid_samples = 0
         
         # Process each sample in the batch
         for i, (image, prompt) in enumerate(zip(images, prompts)):
@@ -249,18 +260,19 @@ for epoch in range(EPOCHS):
                 # Compute loss (pred_mask has gradients now!)
                 loss = dice_loss(pred_mask, gt_mask) + focal_loss(pred_mask, gt_mask)
                 batch_loss += loss
+                valid_samples += 1
                 
             except Exception as e:
                 print(f"\nError processing sample {i}: {e}")
                 continue
         
-        # Check if we have any valid loss
-        if batch_loss == 0:
+        # Check if we have any valid samples
+        if valid_samples == 0:
             print("\nWarning: No valid samples in batch, skipping...")
             continue
         
-        # Average loss over batch
-        batch_loss = batch_loss / len(images)
+        # Average loss over valid samples only
+        batch_loss = batch_loss / valid_samples
         
         # Backward pass
         optimizer.zero_grad()
@@ -272,11 +284,24 @@ for epoch in range(EPOCHS):
         optimizer.step()
         
         total_loss += batch_loss.item()
-        pbar.set_postfix({"loss": f"{batch_loss.item():.4f}"})
+        num_batches += 1
+        total_samples += len(images)
+        valid_samples_count += valid_samples
+        pbar.set_postfix({
+            "loss": f"{batch_loss.item():.4f}",
+            "valid": f"{valid_samples}/{len(images)}"
+        })
         wandb.log({"train_loss": batch_loss.item()})
+        
+        # Clear CUDA cache periodically to prevent memory buildup
+        if device == "cuda" and num_batches % 10 == 0:
+            torch.cuda.empty_cache()
     
-    avg_train_loss = total_loss / len(train_dl)
-    print(f"Epoch {epoch+1}: Train Loss = {avg_train_loss:.4f}")
+    # Calculate average loss over processed batches
+    avg_train_loss = total_loss / max(num_batches, 1)
+    sample_success_rate = (valid_samples_count / max(total_samples, 1)) * 100
+    print(f"Epoch {epoch+1}: Train Loss = {avg_train_loss:.4f} | "
+          f"Valid Samples: {valid_samples_count}/{total_samples} ({sample_success_rate:.1f}%)")
     
     # --------------------------
     # VALIDATION
